@@ -32,12 +32,18 @@ TEMPERATURE = 0.7
 TOP_P = 0.95
 SYSTEM = "You are a concise technical tutor. Be clear and direct."
 
+# MiniMax runs two separate platforms; key and host must match.
+MINIMAX_BASE_URLS = {
+    "global": "https://api.minimax.io/v1",  # key from platform.minimax.io
+    "cn": "https://api.minimaxi.com/v1",  # key from platform.minimaxi.com
+}
+
 # Provider configs — change MODEL env vars or edit these to switch models
 PROVIDERS = {
     "minimax": {
         "label": "MiniMax",
         "api_key_env": "MINIMAX_API_KEY",
-        "base_url": "https://api.minimax.io/v1",
+        "base_url_fn": "minimax",  # resolved in make_client
         "model_env": "MINIMAX_MODEL",
         "default_model": "MiniMax-M3.1-Flash",
         # Optional thinking depth: low | medium | high | xhigh | max
@@ -62,8 +68,19 @@ def _clean_secret(value: str) -> str:
     return value
 
 
+def minimax_base_url() -> str:
+    """Resolve MiniMax host from MINIMAX_BASE_URL or MINIMAX_REGION."""
+    explicit = _clean_secret(os.getenv("MINIMAX_BASE_URL", ""))
+    if explicit:
+        return explicit.rstrip("/")
+    region = _clean_secret(os.getenv("MINIMAX_REGION", "global")).lower()
+    if region in ("cn", "china", "mainland", "com"):
+        return MINIMAX_BASE_URLS["cn"]
+    return MINIMAX_BASE_URLS["global"]
+
+
 def make_client(provider_key: str) -> tuple[OpenAI, str, dict]:
-    cfg = PROVIDERS[provider_key]
+    cfg = dict(PROVIDERS[provider_key])  # shallow copy so we can attach resolved url
     api_key = _clean_secret(os.getenv(cfg["api_key_env"], ""))
     if not api_key or api_key.startswith("your_"):
         raise SystemExit(
@@ -71,6 +88,8 @@ def make_client(provider_key: str) -> tuple[OpenAI, str, dict]:
             f"Copy .env.example → .env and add your key."
         )
     model = _clean_secret(os.getenv(cfg["model_env"], cfg["default_model"]))
+    if cfg.get("base_url_fn") == "minimax":
+        cfg["base_url"] = minimax_base_url()
     client = OpenAI(api_key=api_key, base_url=cfg["base_url"], timeout=120.0)
     return client, model, cfg
 
@@ -128,6 +147,7 @@ def ask(provider_key: str, prompt: str) -> dict:
             "ok": True,
             "label": label,
             "model": model,
+            "base_url": cfg["base_url"],
             "text": text,
             "elapsed_ms": elapsed_ms,
             "prompt_tokens": getattr(usage, "prompt_tokens", None) if usage else None,
@@ -140,6 +160,7 @@ def ask(provider_key: str, prompt: str) -> dict:
             "ok": False,
             "label": label,
             "model": model,
+            "base_url": cfg["base_url"],
             "text": "",
             "elapsed_ms": elapsed_ms,
             "prompt_tokens": None,
@@ -150,7 +171,11 @@ def ask(provider_key: str, prompt: str) -> dict:
 
 def print_result(result: dict) -> None:
     print("=" * 72)
-    print(f"{result['label']}  ·  model={result['model']}  ·  {result['elapsed_ms']} ms")
+    extra = f"  ·  base={result['base_url']}" if result.get("base_url") else ""
+    print(
+        f"{result['label']}  ·  model={result['model']}  ·  "
+        f"{result['elapsed_ms']} ms{extra}"
+    )
     if result["prompt_tokens"] is not None:
         print(
             f"tokens: prompt={result['prompt_tokens']}  "
@@ -161,6 +186,15 @@ def print_result(result: dict) -> None:
         print(result["text"] or "(empty response)")
     else:
         print(f"ERROR:\n{result['error']}")
+        if result["label"] == "MiniMax" and "401" in (result["error"] or ""):
+            print(
+                "\nMiniMax 401 hint: key and host must be from the SAME region.\n"
+                "  • Key from platform.minimax.io  → MINIMAX_REGION=global "
+                "(api.minimax.io)  [default]\n"
+                "  • Key from platform.minimaxi.com → MINIMAX_REGION=cn "
+                "(api.minimaxi.com)\n"
+                "Also check: no quotes in .env, key not revoked, account has credit."
+            )
     print()
 
 

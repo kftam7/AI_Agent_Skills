@@ -24,18 +24,26 @@ cp ../.env.example ../.env
 
 | Variable | Where to get it |
 |---|---|
-| `MINIMAX_API_KEY` | [platform.minimax.io](https://platform.minimax.io/user-center/basic-information/interface-key) |
+| `MINIMAX_API_KEY` | Global: [platform.minimax.io](https://platform.minimax.io/user-center/basic-information/interface-key) · China: [platform.minimaxi.com](https://platform.minimaxi.com) |
 | `DEEPSEEK_API_KEY` | [platform.deepseek.com](https://platform.deepseek.com) |
+
+MiniMax has **two separate regions**. A key from one does **not** work on the other:
+
+| Key from | Set in `.env` |
+|---|---|
+| platform.minimax.io | `MINIMAX_REGION=global` (default) |
+| platform.minimaxi.com | `MINIMAX_REGION=cn` |
 
 Optional overrides in `.env`:
 
 ```bash
+MINIMAX_REGION=cn                  # if your key is from the China platform
 MINIMAX_MODEL=MiniMax-M3.1-Flash   # or MiniMax-M3
 MINIMAX_REASONING_EFFORT=low       # low | medium | high | xhigh | max
 DEEPSEEK_MODEL=deepseek-chat
 ```
 
-Do not wrap API keys in quotes.
+Do not wrap API keys in quotes. A MiniMax `401 invalid api key (2049)` is almost always a wrong key **or** region mismatch.
 
 ### Run
 
