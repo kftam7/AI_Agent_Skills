@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Call Grok (xAI) and DeepSeek with the same prompt and print a side-by-side comparison.
+Call MiniMax and DeepSeek with the same prompt and print a side-by-side comparison.
 
-Both APIs are OpenAI-compatible. Switching providers is just base_url + api_key + model.
-Grok uses the Responses API (recommended for grok-4.7); DeepSeek uses Chat Completions.
+Both APIs are OpenAI Chat Completions–compatible — switching providers is
+just base_url + api_key + model.
 """
 
 from __future__ import annotations
@@ -28,23 +28,20 @@ DEFAULT_PROMPT = (
     "and why function calling matters."
 )
 
-# Shared sampling — xAI recommends ~0.7 / 0.95 for Grok comparisons
 TEMPERATURE = 0.7
 TOP_P = 0.95
 SYSTEM = "You are a concise technical tutor. Be clear and direct."
 
 # Provider configs — change MODEL env vars or edit these to switch models
 PROVIDERS = {
-    "grok": {
-        "label": "Grok (xAI)",
-        "api_key_env": "XAI_API_KEY",
-        "base_url": "https://api.x.ai/v1",
-        "model_env": "XAI_MODEL",
-        "default_model": "grok-4.7",
-        # Responses API is the supported path for current Grok reasoning models
-        "api": "responses",
-        # Keep comparison snappy; override with XAI_REASONING_EFFORT=high if needed
-        "reasoning_effort_env": "XAI_REASONING_EFFORT",
+    "minimax": {
+        "label": "MiniMax",
+        "api_key_env": "MINIMAX_API_KEY",
+        "base_url": "https://api.minimax.io/v1",
+        "model_env": "MINIMAX_MODEL",
+        "default_model": "MiniMax-M3.1-Flash",
+        # Optional thinking depth: low | medium | high | xhigh | max
+        "reasoning_effort_env": "MINIMAX_REASONING_EFFORT",
         "default_reasoning_effort": "low",
     },
     "deepseek": {
@@ -53,7 +50,6 @@ PROVIDERS = {
         "base_url": "https://api.deepseek.com",
         "model_env": "DEEPSEEK_MODEL",
         "default_model": "deepseek-chat",
-        "api": "chat",
     },
 }
 
@@ -75,9 +71,7 @@ def make_client(provider_key: str) -> tuple[OpenAI, str, dict]:
             f"Copy .env.example → .env and add your key."
         )
     model = _clean_secret(os.getenv(cfg["model_env"], cfg["default_model"]))
-    # Reasoning models can take a while; give Grok a longer timeout
-    timeout = 120.0 if cfg["api"] == "responses" else 60.0
-    client = OpenAI(api_key=api_key, base_url=cfg["base_url"], timeout=timeout)
+    client = OpenAI(api_key=api_key, base_url=cfg["base_url"], timeout=120.0)
     return client, model, cfg
 
 
@@ -101,81 +95,43 @@ def format_api_error(exc: BaseException) -> str:
     return "\n".join(parts)
 
 
-def _usage_tokens(usage) -> tuple[int | None, int | None]:
-    if usage is None:
-        return None, None
-    prompt = getattr(usage, "prompt_tokens", None)
-    if prompt is None:
-        prompt = getattr(usage, "input_tokens", None)
-    completion = getattr(usage, "completion_tokens", None)
-    if completion is None:
-        completion = getattr(usage, "output_tokens", None)
-    return prompt, completion
-
-
-def _text_from_responses(response) -> str:
-    text = getattr(response, "output_text", None)
-    if text:
-        return text.strip()
-    chunks: list[str] = []
-    for item in getattr(response, "output", None) or []:
-        if getattr(item, "type", None) != "message":
-            continue
-        for part in getattr(item, "content", None) or []:
-            if getattr(part, "type", None) in ("output_text", "text"):
-                chunks.append(getattr(part, "text", "") or "")
-    return "".join(chunks).strip()
-
-
 def ask(provider_key: str, prompt: str) -> dict:
     client, model, cfg = make_client(provider_key)
     label = cfg["label"]
     started = time.perf_counter()
     try:
-        if cfg["api"] == "responses":
+        kwargs: dict = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": TEMPERATURE,
+            "top_p": TOP_P,
+        }
+        # MiniMax-M3.1-Flash accepts reasoning_effort; DeepSeek ignores if omitted
+        effort_env = cfg.get("reasoning_effort_env")
+        if effort_env:
             effort = _clean_secret(
-                os.getenv(
-                    cfg.get("reasoning_effort_env", ""),
-                    cfg.get("default_reasoning_effort", "low"),
-                )
+                os.getenv(effort_env, cfg.get("default_reasoning_effort", ""))
             )
-            kwargs = {
-                "model": model,
-                "input": [
-                    {"role": "system", "content": SYSTEM},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": TEMPERATURE,
-                "top_p": TOP_P,
-            }
             if effort:
-                kwargs["reasoning"] = {"effort": effort}
-            response = client.responses.create(**kwargs)
-            text = _text_from_responses(response)
-            prompt_tokens, completion_tokens = _usage_tokens(response.usage)
-        else:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": SYSTEM},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=TEMPERATURE,
-                top_p=TOP_P,
-            )
-            text = (response.choices[0].message.content or "").strip()
-            prompt_tokens, completion_tokens = _usage_tokens(response.usage)
+                kwargs["reasoning_effort"] = effort
 
+        response = client.chat.completions.create(**kwargs)
+        message = response.choices[0].message
+        text = (message.content or "").strip()
+        # MiniMax may also return thinking in reasoning_content; keep answer-only
+        usage = response.usage
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         return {
             "ok": True,
             "label": label,
             "model": model,
-            "api": cfg["api"],
             "text": text,
             "elapsed_ms": elapsed_ms,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
+            "prompt_tokens": getattr(usage, "prompt_tokens", None) if usage else None,
+            "completion_tokens": getattr(usage, "completion_tokens", None) if usage else None,
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001 — show any API/network error clearly
@@ -184,7 +140,6 @@ def ask(provider_key: str, prompt: str) -> dict:
             "ok": False,
             "label": label,
             "model": model,
-            "api": cfg["api"],
             "text": "",
             "elapsed_ms": elapsed_ms,
             "prompt_tokens": None,
@@ -195,31 +150,23 @@ def ask(provider_key: str, prompt: str) -> dict:
 
 def print_result(result: dict) -> None:
     print("=" * 72)
-    print(
-        f"{result['label']}  ·  model={result['model']}  ·  "
-        f"api={result['api']}  ·  {result['elapsed_ms']} ms"
-    )
+    print(f"{result['label']}  ·  model={result['model']}  ·  {result['elapsed_ms']} ms")
     if result["prompt_tokens"] is not None:
         print(
-            f"tokens: prompt/input={result['prompt_tokens']}  "
-            f"completion/output={result['completion_tokens']}"
+            f"tokens: prompt={result['prompt_tokens']}  "
+            f"completion={result['completion_tokens']}"
         )
     print("-" * 72)
     if result["ok"]:
         print(result["text"] or "(empty response)")
     else:
         print(f"ERROR:\n{result['error']}")
-        if result["label"].startswith("Grok"):
-            print(
-                "\nHints: check XAI_API_KEY (no quotes), try XAI_MODEL=grok-4.6, "
-                "or XAI_REASONING_EFFORT=low in .env"
-            )
     print()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Compare Grok and DeepSeek answers to the same prompt."
+        description="Compare MiniMax and DeepSeek answers to the same prompt."
     )
     parser.add_argument(
         "prompt",

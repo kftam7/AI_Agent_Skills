@@ -2,9 +2,9 @@
 
 Hands-on exercises for learning AI agent skills.
 
-## Exercise 1 — Compare Grok vs DeepSeek
+## Exercise 1 — Compare MiniMax vs DeepSeek
 
-Tiny script under `tool_using_agent/` that calls **Grok (xAI)** and **DeepSeek** with the same prompt and prints a side-by-side comparison. Both APIs are OpenAI-compatible, so switching providers is just `base_url` + `api_key` + `model`.
+Tiny script under `tool_using_agent/` that calls **MiniMax** and **DeepSeek** with the same prompt and prints a side-by-side comparison. Both APIs are OpenAI Chat Completions–compatible, so switching providers is just `base_url` + `api_key` + `model`.
 
 ### Setup
 
@@ -19,23 +19,23 @@ Copy env template and add your keys:
 
 ```bash
 cp ../.env.example ../.env
-# edit ../.env → set XAI_API_KEY and DEEPSEEK_API_KEY
+# edit ../.env → set MINIMAX_API_KEY and DEEPSEEK_API_KEY
 ```
 
 | Variable | Where to get it |
 |---|---|
-| `XAI_API_KEY` | [console.x.ai](https://console.x.ai) |
+| `MINIMAX_API_KEY` | [platform.minimax.io](https://platform.minimax.io/user-center/basic-information/interface-key) |
 | `DEEPSEEK_API_KEY` | [platform.deepseek.com](https://platform.deepseek.com) |
 
 Optional overrides in `.env`:
 
 ```bash
-XAI_MODEL=grok-4.7          # or grok-4.6 / grok-4.3 if your key lacks 4.7
-XAI_REASONING_EFFORT=low    # low | medium | high | xhigh
+MINIMAX_MODEL=MiniMax-M3.1-Flash   # or MiniMax-M3
+MINIMAX_REASONING_EFFORT=low       # low | medium | high | xhigh | max
 DEEPSEEK_MODEL=deepseek-chat
 ```
 
-Do not wrap API keys in quotes. A Grok `400` usually means a bad key format or an unsupported request field — the script now prints the full error body.
+Do not wrap API keys in quotes.
 
 ### Run
 
@@ -47,12 +47,12 @@ python compare_models.py
 python compare_models.py "What is function calling in one sentence?"
 
 # one provider only
-python compare_models.py --only grok
+python compare_models.py --only minimax
 python compare_models.py --only deepseek
 ```
 
 ### Design notes
 
-- Same prompt, same system message, same temperature for both models.
+- Same prompt, same system message, same temperature/top_p for both models.
 - Provider switch lives in the `PROVIDERS` dict in `compare_models.py`.
 - Next: a small tool-using agent loop (function calling) reusing the same provider switch.
