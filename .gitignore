@@ -1,0 +1,40 @@
+# key files
+Keys/
+
+# project file
+project plan - x402 data.txt
+
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment variables and secrets
+.env
+.env.local
+.env_client
+secrets.json
+
+# IDE Settings
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Build, packaging, and test cache
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# raw data 
+workers/raw_llm_datasets/
