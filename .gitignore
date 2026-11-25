@@ -21,6 +21,10 @@ ENV/
 .env_client
 secrets.json
 
+# Prompting / agent lab run artifacts (keep folder via .gitkeep)
+tool_using_agent/lab_output/*
+!tool_using_agent/lab_output/.gitkeep
+
 # IDE Settings
 .vscode/
 .idea/
