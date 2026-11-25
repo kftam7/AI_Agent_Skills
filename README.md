@@ -30,9 +30,12 @@ cp ../.env.example ../.env
 Optional overrides in `.env`:
 
 ```bash
-XAI_MODEL=grok-4.7
+XAI_MODEL=grok-4.7          # or grok-4.6 / grok-4.3 if your key lacks 4.7
+XAI_REASONING_EFFORT=low    # low | medium | high | xhigh
 DEEPSEEK_MODEL=deepseek-chat
 ```
+
+Do not wrap API keys in quotes. A Grok `400` usually means a bad key format or an unsupported request field — the script now prints the full error body.
 
 ### Run
 

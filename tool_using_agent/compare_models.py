@@ -2,12 +2,14 @@
 """
 Call Grok (xAI) and DeepSeek with the same prompt and print a side-by-side comparison.
 
-Both APIs are OpenAI-compatible — switching providers is just base_url + api_key + model.
+Both APIs are OpenAI-compatible. Switching providers is just base_url + api_key + model.
+Grok uses the Responses API (recommended for grok-4.7); DeepSeek uses Chat Completions.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -26,6 +28,11 @@ DEFAULT_PROMPT = (
     "and why function calling matters."
 )
 
+# Shared sampling — xAI recommends ~0.7 / 0.95 for Grok comparisons
+TEMPERATURE = 0.7
+TOP_P = 0.95
+SYSTEM = "You are a concise technical tutor. Be clear and direct."
+
 # Provider configs — change MODEL env vars or edit these to switch models
 PROVIDERS = {
     "grok": {
@@ -34,6 +41,11 @@ PROVIDERS = {
         "base_url": "https://api.x.ai/v1",
         "model_env": "XAI_MODEL",
         "default_model": "grok-4.7",
+        # Responses API is the supported path for current Grok reasoning models
+        "api": "responses",
+        # Keep comparison snappy; override with XAI_REASONING_EFFORT=high if needed
+        "reasoning_effort_env": "XAI_REASONING_EFFORT",
+        "default_reasoning_effort": "low",
     },
     "deepseek": {
         "label": "DeepSeek",
@@ -41,49 +53,129 @@ PROVIDERS = {
         "base_url": "https://api.deepseek.com",
         "model_env": "DEEPSEEK_MODEL",
         "default_model": "deepseek-chat",
+        "api": "chat",
     },
 }
 
 
-def make_client(provider_key: str) -> tuple[OpenAI, str, str]:
+def _clean_secret(value: str) -> str:
+    """Strip whitespace and optional surrounding quotes from .env values."""
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        value = value[1:-1].strip()
+    return value
+
+
+def make_client(provider_key: str) -> tuple[OpenAI, str, dict]:
     cfg = PROVIDERS[provider_key]
-    api_key = os.getenv(cfg["api_key_env"], "").strip()
+    api_key = _clean_secret(os.getenv(cfg["api_key_env"], ""))
     if not api_key or api_key.startswith("your_"):
         raise SystemExit(
             f"Missing {cfg['api_key_env']}. "
             f"Copy .env.example → .env and add your key."
         )
-    model = os.getenv(cfg["model_env"], cfg["default_model"]).strip()
-    client = OpenAI(api_key=api_key, base_url=cfg["base_url"])
-    return client, model, cfg["label"]
+    model = _clean_secret(os.getenv(cfg["model_env"], cfg["default_model"]))
+    # Reasoning models can take a while; give Grok a longer timeout
+    timeout = 120.0 if cfg["api"] == "responses" else 60.0
+    client = OpenAI(api_key=api_key, base_url=cfg["base_url"], timeout=timeout)
+    return client, model, cfg
+
+
+def format_api_error(exc: BaseException) -> str:
+    """Prefer the provider JSON body over a truncated one-liner."""
+    parts = [f"{type(exc).__name__}: {exc}"]
+    body = getattr(exc, "body", None)
+    if body is not None:
+        try:
+            parts.append("body: " + json.dumps(body, indent=2, default=str))
+        except TypeError:
+            parts.append(f"body: {body!r}")
+    response = getattr(exc, "response", None)
+    if response is not None and body is None:
+        try:
+            parts.append("body: " + json.dumps(response.json(), indent=2, default=str))
+        except Exception:  # noqa: BLE001
+            text = getattr(response, "text", None)
+            if text:
+                parts.append(f"body: {text}")
+    return "\n".join(parts)
+
+
+def _usage_tokens(usage) -> tuple[int | None, int | None]:
+    if usage is None:
+        return None, None
+    prompt = getattr(usage, "prompt_tokens", None)
+    if prompt is None:
+        prompt = getattr(usage, "input_tokens", None)
+    completion = getattr(usage, "completion_tokens", None)
+    if completion is None:
+        completion = getattr(usage, "output_tokens", None)
+    return prompt, completion
+
+
+def _text_from_responses(response) -> str:
+    text = getattr(response, "output_text", None)
+    if text:
+        return text.strip()
+    chunks: list[str] = []
+    for item in getattr(response, "output", None) or []:
+        if getattr(item, "type", None) != "message":
+            continue
+        for part in getattr(item, "content", None) or []:
+            if getattr(part, "type", None) in ("output_text", "text"):
+                chunks.append(getattr(part, "text", "") or "")
+    return "".join(chunks).strip()
 
 
 def ask(provider_key: str, prompt: str) -> dict:
-    client, model, label = make_client(provider_key)
+    client, model, cfg = make_client(provider_key)
+    label = cfg["label"]
     started = time.perf_counter()
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a concise technical tutor. Be clear and direct.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-        )
+        if cfg["api"] == "responses":
+            effort = _clean_secret(
+                os.getenv(
+                    cfg.get("reasoning_effort_env", ""),
+                    cfg.get("default_reasoning_effort", "low"),
+                )
+            )
+            kwargs = {
+                "model": model,
+                "input": [
+                    {"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": TEMPERATURE,
+                "top_p": TOP_P,
+            }
+            if effort:
+                kwargs["reasoning"] = {"effort": effort}
+            response = client.responses.create(**kwargs)
+            text = _text_from_responses(response)
+            prompt_tokens, completion_tokens = _usage_tokens(response.usage)
+        else:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+            )
+            text = (response.choices[0].message.content or "").strip()
+            prompt_tokens, completion_tokens = _usage_tokens(response.usage)
+
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        text = (response.choices[0].message.content or "").strip()
-        usage = response.usage
         return {
             "ok": True,
             "label": label,
             "model": model,
+            "api": cfg["api"],
             "text": text,
             "elapsed_ms": elapsed_ms,
-            "prompt_tokens": getattr(usage, "prompt_tokens", None) if usage else None,
-            "completion_tokens": getattr(usage, "completion_tokens", None) if usage else None,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001 — show any API/network error clearly
@@ -92,27 +184,36 @@ def ask(provider_key: str, prompt: str) -> dict:
             "ok": False,
             "label": label,
             "model": model,
+            "api": cfg["api"],
             "text": "",
             "elapsed_ms": elapsed_ms,
             "prompt_tokens": None,
             "completion_tokens": None,
-            "error": f"{type(exc).__name__}: {exc}",
+            "error": format_api_error(exc),
         }
 
 
 def print_result(result: dict) -> None:
     print("=" * 72)
-    print(f"{result['label']}  ·  model={result['model']}  ·  {result['elapsed_ms']} ms")
+    print(
+        f"{result['label']}  ·  model={result['model']}  ·  "
+        f"api={result['api']}  ·  {result['elapsed_ms']} ms"
+    )
     if result["prompt_tokens"] is not None:
         print(
-            f"tokens: prompt={result['prompt_tokens']}  "
-            f"completion={result['completion_tokens']}"
+            f"tokens: prompt/input={result['prompt_tokens']}  "
+            f"completion/output={result['completion_tokens']}"
         )
     print("-" * 72)
     if result["ok"]:
         print(result["text"] or "(empty response)")
     else:
-        print(f"ERROR: {result['error']}")
+        print(f"ERROR:\n{result['error']}")
+        if result["label"].startswith("Grok"):
+            print(
+                "\nHints: check XAI_API_KEY (no quotes), try XAI_MODEL=grok-4.6, "
+                "or XAI_REASONING_EFFORT=low in .env"
+            )
     print()
 
 
@@ -148,7 +249,9 @@ def main() -> int:
         a, b = ok
         print(f"• Latency: {a['label']} {a['elapsed_ms']} ms vs {b['label']} {b['elapsed_ms']} ms")
         print(f"• Length:  {a['label']} {len(a['text'])} chars vs {b['label']} {len(b['text'])} chars")
-        print("• Read both answers above — same prompt, same system message, temperature=0.3.")
+        print(
+            f"• Same prompt + system message; temperature={TEMPERATURE}, top_p={TOP_P}."
+        )
         print()
 
     failed = [r for r in results if not r["ok"]]
