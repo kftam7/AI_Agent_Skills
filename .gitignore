@@ -24,6 +24,9 @@ secrets.json
 # Prompting / agent lab run artifacts (keep folder via .gitkeep)
 tool_using_agent/lab_output/*
 !tool_using_agent/lab_output/.gitkeep
+!tool_using_agent/lab_output/conversations/
+tool_using_agent/lab_output/conversations/*
+!tool_using_agent/lab_output/conversations/.gitkeep
 
 # IDE Settings
 .vscode/

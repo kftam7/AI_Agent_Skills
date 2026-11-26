@@ -16,7 +16,7 @@ import sys
 from typing import Any
 
 from providers import chat_kwargs, get_client
-from tools import TOOLS, run_tool
+from tools import CALCULATE_TOOLS, run_tool
 
 SYSTEM = (
     "Role: careful math assistant.\n"
@@ -80,7 +80,7 @@ def run_agent(
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            tools=TOOLS,
+            tools=CALCULATE_TOOLS,
             tool_choice="auto",
             temperature=temperature,
             **extra,
@@ -136,7 +136,7 @@ def main() -> int:
     parser.add_argument(
         "--provider",
         default="deepseek",
-        choices=["deepseek", "minimax"],
+        choices=["deepseek", "minimax", "grok"],
         help="Swap providers with almost no code change (default: deepseek)",
     )
     parser.add_argument(

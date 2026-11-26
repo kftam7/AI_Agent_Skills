@@ -1,6 +1,8 @@
 # AI_Agent_Skills
 
-Hands-on exercises for learning AI agent skills (MiniMax + DeepSeek).
+Hands-on exercises for learning AI agent skills.
+
+Providers: **DeepSeek**, **MiniMax**, and optional **Grok (xAI)** — switch via `agent_config.json` or `--provider`.
 
 ## Setup
 
@@ -14,15 +16,13 @@ cp ../.env.example ../.env  # then add keys
 
 | Variable | Where to get it |
 |---|---|
-| `MINIMAX_API_KEY` | Global: [platform.minimax.io](https://platform.minimax.io) · China: [platform.minimaxi.com](https://platform.minimaxi.com) |
 | `DEEPSEEK_API_KEY` | [platform.deepseek.com](https://platform.deepseek.com) |
+| `MINIMAX_API_KEY` | Global: [platform.minimax.io](https://platform.minimax.io) · China: [platform.minimaxi.com](https://platform.minimaxi.com) |
+| `XAI_API_KEY` (optional) | [console.x.ai](https://console.x.ai) |
 
-MiniMax region (key and host must match):
+MiniMax region (key and host must match): `MINIMAX_REGION=global` or `cn`.
 
-```bash
-MINIMAX_REGION=global   # platform.minimax.io (default)
-# MINIMAX_REGION=cn     # platform.minimaxi.com
-```
+Default provider: edit `tool_using_agent/agent_config.json`.
 
 ---
 
@@ -37,56 +37,55 @@ python compare_models.py --only deepseek
 
 ## Exercise 2 — Day 3–4: Short, defensible prompting
 
-Six prompt versions of the **same** product-support task (`prompt_versions.py`), covering:
-
-- system vs user placement
-- explicit output constraints
-- “I don’t know” / missing-fact handling
-
 ```bash
-# 3 repeats per version (default provider: deepseek)
-python prompting_lab.py
-
 python prompting_lab.py --provider deepseek --runs 3
-python prompting_lab.py --provider minimax --runs 3
-
-# one version only
-python prompting_lab.py --only v6_unknown_handling
 ```
 
-Outputs land in `lab_output/`:
-
-- `prompting_*.json` — raw answers + consistency ratio
-- `prompting_notes_*.md` — fill-in ranking / interview notes
-
-Read `DESIGN.md` for the interview soundbite.
+See `prompt_versions.py` and fill notes under `lab_output/`.
 
 ---
 
-## Exercise 3 — Day 5–7: Function calling basics
-
-One tool (`calculate`) + full loop in `agent_loop.py`:
-
-1. define tool schema  
-2. parse `tool_calls`  
-3. execute locally  
-4. append `role=tool` result  
-5. get final answer  
-
-Same code for both providers — only `--provider` changes:
+## Exercise 3 — Day 5–7: Function calling basics (1 tool)
 
 ```bash
 python agent_loop.py --provider deepseek
-python agent_loop.py --provider minimax
-
-python agent_loop.py --provider deepseek "What is (81 / 9) ** 2 + 3?"
-python agent_loop.py --provider minimax  "What is (81 / 9) ** 2 + 3?"
+python agent_loop.py --provider minimax "What is (81 / 9) ** 2 + 3?"
 ```
 
-Quick unit check of the tool (no API key):
+---
+
+## Exercise 4 — Day 8–10: Working multi-tool agent
+
+Tools: **weather**, **unit conversion**, **calculator**, optional **web search**.
 
 ```bash
-python -c "from tools import calculate; print(calculate('(17.5 * 4) + 9 / 3'))"
+# uses provider from agent_config.json
+python working_agent.py
+
+# override provider
+python working_agent.py --provider deepseek
+python working_agent.py --provider minimax
+python working_agent.py --provider grok   # if you have XAI_API_KEY
+
+# multi-tool question
+python working_agent.py "What's the weather in Tokyo in Fahrenheit, and how many miles is 12 km?"
+```
+
+Each run writes a full conversation log (messages + tool calls + tool results) to:
+
+`lab_output/conversations/conv_<provider>_<timestamp>.json`
+
+Tool errors return `{ "ok": false, "error": "..." }` — the agent is instructed to report them, not invent facts.
+
+Offline tool smoke test (no LLM key):
+
+```bash
+python -c "
+from tools import calculate, convert_units, run_tool
+print(calculate('(17.5*4)+9/3'))
+print(convert_units(12, 'km', 'mi'))
+print(run_tool('convert_units', '{\"value\":100,\"from_unit\":\"C\",\"to_unit\":\"F\"}'))
+"
 ```
 
 ---
@@ -95,12 +94,13 @@ python -c "from tools import calculate; print(calculate('(17.5 * 4) + 9 / 3'))"
 
 ```
 tool_using_agent/
-  providers.py       # shared MiniMax / DeepSeek clients
-  compare_models.py  # same-prompt comparison
-  prompt_versions.py # 6 defensible prompt designs
-  prompting_lab.py   # run + score consistency
-  tools.py           # calculate schema + implementation
-  agent_loop.py      # function-calling loop
-  DESIGN.md          # prompting + tools design notes
-  lab_output/        # run artifacts (gitignored)
+  agent_config.json  # provider + max_steps + temperature + log_dir
+  providers.py       # DeepSeek / MiniMax / Grok clients
+  compare_models.py
+  prompt_versions.py / prompting_lab.py
+  tools.py           # calculate, convert_units, get_weather, web_search
+  agent_loop.py      # Day 5–7 one-tool loop
+  working_agent.py   # Day 8–10 multi-tool + logs
+  DESIGN.md
+  lab_output/
 ```
