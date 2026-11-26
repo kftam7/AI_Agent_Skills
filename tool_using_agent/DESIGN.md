@@ -10,6 +10,7 @@
 | `tools.py` | Tool **schemas** (what the model sees) + **implementations** (what you run). |
 | `agent_loop.py` | Day 5–7: one-tool loop (`calculate` only). |
 | `working_agent.py` | Day 8–10: 2–3+ tools, error handling, full conversation logs. |
+| `app.py` / `demo_cli.py` | Day 11–14: Streamlit + interactive CLI demos. |
 
 ## Prompting (Day 3–4) — what to say in an interview
 
